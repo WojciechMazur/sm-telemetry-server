@@ -32,10 +32,11 @@ object elasticsearch {
     val Host = sys.env.getOrElse("ELASTICSEARCH_HOST", "localhost")
     val HostPathPrefix = sys.env.get("ELASTICSEARCH_PATH_PREFIX")
     val HostSchema = sys.env.getOrElse("ELASTICSEARCH_SCHEMA", "https")
-    val Port = sys.env.get("ELASTICSEARCH_PORT").flatMap(_.toIntOption).getOrElse(-1)
+    val Port =
+      sys.env.get("ELASTICSEARCH_PORT").flatMap(_.toIntOption).getOrElse(-1)
     val Credentials = new UsernamePasswordCredentials(
       sys.env.getOrElse("ELASTICSEARCH_USERNAME", "elastic"),
-      sys.env.getOrElse("ELASTICSEARCH_PASSWORD", "changeme")
+      sys.env.getOrElse("ELASTICSEARCH_PASSWORD", "changeme"),
     )
     val clientConfig = new HttpClientConfigCallback {
       override def customizeHttpClient(
@@ -61,14 +62,13 @@ object elasticsearch {
   }
 
   def checkConnection(esClient: ElasticClient): IO[Unit] =
-    for
-      response <- esClient.execute(CatHealth())
-      _ <- IO.raiseWhen(response.isError)(
-        new IllegalStateException(
-          s"Failed to connect with ElasticSearch",
-          response.error.asException
-        )
+    for response <- esClient.execute(CatHealth())
+    _ <- IO.raiseWhen(response.isError)(
+      new IllegalStateException(
+        s"Failed to connect with ElasticSearch",
+        response.error.asException,
       )
-      _ <- IO.println(response.body)
+    )
+    _ <- IO.println(response.body)
     yield ()
 }

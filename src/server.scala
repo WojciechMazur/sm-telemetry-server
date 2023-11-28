@@ -1,21 +1,51 @@
 package scala.meta.telemetry.server
 
-import scala.meta.internal.{telemetry => api}
-
 import cats.effect._
 import cats.effect.kernel.Resource
 import com.comcast.ip4s.{port, ipv4}
 import org.http4s._
 import org.http4s.ember.server._
-import smithy4s.http4s.SimpleRestJsonBuilder
 import fs2.io.net.tls.TLSContext
+import scala.meta.internal.{telemetry => api}
 
 import com.sksamuel.elastic4s.ElasticClient
 import com.sksamuel.elastic4s.ElasticDsl._
 import com.sksamuel.elastic4s.cats.effect.instances._
 
 import java.time.OffsetDateTime
-import com.github.plokhotnyuk.jsoniter_scala.core.writeToString
+import com.github.plokhotnyuk.jsoniter_scala.core.*
+import sttp.tapir.server.http4s.Http4sServerInterpreter
+import model.given_Conversion_Unit_Void
+
+object Endpoints:
+  import sttp.tapir.*
+  import sttp.model.Method
+
+  private inline def endpointFor[In, Out](
+      prototype: api.ServiceEndpoint[In, Out]
+  ) = {
+    def gson = api.GsonCodecs.gson
+    endpoint
+      .method(Method.unsafeApply(prototype.getMethod()))
+      .in("v1" / "telemetry" / "sendReportEvent" / stringJsonBody)
+      .mapIn[In] { plainJson =>
+        val res = scala.util.Try{
+          println(plainJson)
+          gson.fromJson(plainJson, prototype.getInputType())
+        }
+        println(res)
+        res.get
+      } { gson.toJson(_) }
+      .out(stringJsonBody)
+      .mapOut { plainJson =>
+        gson.fromJson(plainJson, prototype.getOutputType())
+      } { gson.toJson(_) }
+  }
+
+  val sendReportEvent: PublicEndpoint[api.ReportEvent, Unit, Void, Any] = endpointFor(
+    api.TelemetryService.SendReportEventEndpoint
+  )
+  println(sendReportEvent.show)
 
 object Main extends IOApp:
   lazy val keystorePassword = sys.env.getOrElse("KEYSTORE_PASSWORD", "changeit").toCharArray()
@@ -28,9 +58,9 @@ object Main extends IOApp:
     )
 
   override def run(args: List[String]): IO[ExitCode] = Routes.telemetryRoutes
-    .flatMap{routes => 
-    // .both(tlsContext.toResource)
-    // .flatMap { (routes, tlsContext) =>
+    .flatMap { routes =>
+      // .both(tlsContext.toResource)
+      // .flatMap { (routes, tlsContext) =>
       EmberServerBuilder
         .default[IO]
         .withPort(port"8081")
@@ -47,8 +77,8 @@ object Main extends IOApp:
     .as(ExitCode.Success)
 end Main
 
-class TelemetryServerImpl(esClient: ElasticClient) extends api.TelemetryService {
-  override def sendReportEvent(event: api.ReportEvent): IO[Unit] = {
+class TelemetryServerImpl(esClient: ElasticClient) {
+  def sendReportEvent(event: api.ReportEvent): IO[Void] = {
     for
       transformedEvent <- IO.pure {
         model.ReportEventOf(event, receivedAt = OffsetDateTime.now())
@@ -86,7 +116,9 @@ object Routes {
           // .flatTap(elasticsearchAdmin.createIndices)
           .flatTap(_ => IO.println("Elasticsearch client ok"))
       }
-      serverImpl = TelemetryServerImpl(esClient)
-      routes <- SimpleRestJsonBuilder.routes(serverImpl).resource
+      logic = TelemetryServerImpl(esClient)
+      routes = Http4sServerInterpreter[IO]().toRoutes(
+        Endpoints.sendReportEvent.serverLogicSuccess[IO](logic.sendReportEvent)
+      )
     yield routes
 }
