@@ -19,13 +19,20 @@ import java.time.OffsetDateTime
 
 object elasticsearch {
   object index {
-    def TelemetryReportsIndex(receivedAt: OffsetDateTime) = {
+    def TelemetryErrorReportsIndex(receivedAt: OffsetDateTime) = {
       val year = receivedAt.getYear()
       val month = receivedAt.getMonthValue()
-      Index(s"telemetry-raports-${year}_${month}")
+      Index(s"telemetry-error-reports-${year}_${month}")
+    }
+    def TelemetryCrashReportsIndex(receivedAt: OffsetDateTime) = {
+      val year = receivedAt.getYear()
+      val month = receivedAt.getMonthValue()
+      Index(s"telemetry-crash-reports-${year}_${month}")
     }
 
-    val TelemetryReportersAlias = "telemetry-raports"
+    val TelemetryReportsAlias = "telemetry-reports"
+    val TelemetryCrashReportsAlias = "telemetry-crash-reports"
+    val TelemetryErrorReportsAlias = "telemetry-error-reports"
   }
 
   def getClient(): ElasticClient = {
@@ -36,7 +43,7 @@ object elasticsearch {
       sys.env.get("ELASTICSEARCH_PORT").flatMap(_.toIntOption).getOrElse(-1)
     val Credentials = new UsernamePasswordCredentials(
       sys.env.getOrElse("ELASTICSEARCH_USERNAME", "elastic"),
-      sys.env.getOrElse("ELASTICSEARCH_PASSWORD", "changeme"),
+      sys.env.getOrElse("ELASTICSEARCH_PASSWORD", "changeme")
     )
     val clientConfig = new HttpClientConfigCallback {
       override def customizeHttpClient(
@@ -62,13 +69,14 @@ object elasticsearch {
   }
 
   def checkConnection(esClient: ElasticClient): IO[Unit] =
-    for response <- esClient.execute(CatHealth())
-    _ <- IO.raiseWhen(response.isError)(
-      new IllegalStateException(
-        s"Failed to connect with ElasticSearch",
-        response.error.asException,
+    for
+      response <- esClient.execute(CatHealth())
+      _ <- IO.raiseWhen(response.isError)(
+        new IllegalStateException(
+          s"Failed to connect with ElasticSearch",
+          response.error.asException
+        )
       )
-    )
-    _ <- IO.println(response.body)
+      _ <- scribe.cats[IO].trace(response.toString())
     yield ()
 }

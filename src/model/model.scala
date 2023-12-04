@@ -6,34 +6,52 @@ import com.github.plokhotnyuk.jsoniter_scala.macros.JsonCodecMaker
 import java.time.OffsetDateTime
 import java.nio.charset.StandardCharsets
 import java.util.UUID
+import com.sksamuel.elastic4s.Index
+import scala.meta.telemetry.server.elasticsearch
 
-opaque type EventId <: String = String
-object EventId:
-  private def productId(obj: Product): EventId =
+trait Identified[T]:
+  def id(v: T): Id[T]
+
+opaque type Id[T] <: String = String
+object Id:
+  def of[T](obj: Product): Id[T] =
     UUID.nameUUIDFromBytes(obj.toString().getBytes(StandardCharsets.UTF_8)).toString()
-  private def productId[T <: Product](obj: T)(selector: T => Product): EventId = productId(selector(obj))
+  def of[T <: Product](obj: T)(selector: T => Product): Id[T] = of(selector(obj))
 
-  def apply(event: ReportEvent): EventId =
-    productId(event)(e => (e.id, e.name, e.text, e.shortSummary, e.error, e.env, e.reporter))
+trait Indexed[T]:
+  def index(v: T): Index
 
-case class ReportEvent(
+case class ErrorReport(
     receivedAt: OffsetDateTime,
     id: Option[String],
     name: String,
-    text: String,
-    shortSummary: String,
-    error: Option[ReportedError],
+    text: Option[String],
+    error: Option[ExceptionSummary],
     env: Environment,
     reporterName: String,
     reporter: ReporterWrapper
 )
+object ErrorReport:
+  given JsonValueCodec[ErrorReport] = JsonCodecMaker.make
+  given Identified[ErrorReport] = Id.of(_)(e => (e.id, e.name, e.text, e.error, e.env, e.reporter))
+  given Indexed[ErrorReport] = v => elasticsearch.index.TelemetryErrorReportsIndex(v.receivedAt)
 
-object ReportEvent:
-  given JsonValueCodec[ReportEvent] = JsonCodecMaker.make
+case class CrashReport(
+    receivedAt: OffsetDateTime,
+    component: Component,
+    error: ExceptionSummary,
+    env: Environment,
+    reporter: Option[ReporterWrapper]
+)
+object CrashReport:
+  given JsonValueCodec[CrashReport] = JsonCodecMaker.make
+  given Identified[CrashReport] = Id.of(_)(e => (e.error, e.component, e.env, e.reporter))
+  given Indexed[CrashReport] = v => elasticsearch.index.TelemetryCrashReportsIndex(v.receivedAt)
 
+case class Component(name: String, version: Option[String])
 case class Environment(java: JavaInfo, system: SystemInfo)
 
-case class ReportedError(
+case class ExceptionSummary(
     exceptions: List[String],
     stacktrace: String
 )

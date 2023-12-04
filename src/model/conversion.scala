@@ -14,16 +14,27 @@ import scala.jdk.CollectionConverters.*
 given Conversion[Unit, Void] = _ => null.asInstanceOf[Void]
 given Conversion[Void, Unit] = _ => ()
 
-def ReportEventOf(event: api.ReportEvent, receivedAt: OffsetDateTime) = event
-  .into[model.ReportEvent]
+def ErrorReportOf(report: api.ErrorReport, receivedAt: OffsetDateTime) = report
+  .into[model.ErrorReport]
   .withFieldConst(_.receivedAt, receivedAt)
   .withFieldComputed(_.reporter, _.getReporterContext().transformInto[model.ReporterWrapper])
+  .transform
+
+def CrashReportOf(report: api.CrashReport, receivedAt: OffsetDateTime) = report
+  .into[model.CrashReport]
+  .withFieldConst(_.receivedAt, receivedAt)
+  .withFieldComputed(
+    _.component,
+    v => Component(name = v.getComponentName(), version = v.getComponentVersion().toScala)
+  )
+  .withFieldComputed(_.reporter, _.getReporterContext().toScala.map(_.transformInto[model.ReporterWrapper]))
   .transform
 
 transparent inline given TransformerConfiguration[?] =
   TransformerConfiguration.default.enableBeanGetters.enableMacrosLogging
 
-given Transformer[api.ReportedError, model.ReportedError] = _.into[model.ReportedError].enableBeanGetters.transform
+given Transformer[api.ExceptionSummary, model.ExceptionSummary] =
+  _.into[model.ExceptionSummary].enableBeanGetters.transform
 
 extension (reporter: api.ReporterContext) {
   inline def projection[T <: api.ReporterContext]: Option[T] = reporter match {
@@ -36,7 +47,7 @@ given Transformer[api.ReporterContextUnion, model.ReporterWrapper] = reporter =>
   model.ReporterWrapper(
     metalsLSP = reporter
       .getMetalsLSP()
-      .asScala
+      .toScala
       .map(
         _.into[model.Reporter.MetalsLSP]
           .withFieldComputed(
@@ -47,10 +58,10 @@ given Transformer[api.ReporterContextUnion, model.ReporterWrapper] = reporter =>
       ),
     scalaPresentationCompiler = reporter
       .getScalaPresentationCompiler()
-      .asScala
+      .toScala
       .map(_.transformInto[model.Reporter.ScalaPresentationCompiler]),
     unknown = reporter
       .getUnknown()
-      .asScala
+      .toScala
       .map(_.transformInto[model.Reporter.Unknown])
   )
